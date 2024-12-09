@@ -55,6 +55,9 @@ class CropWindow(tk.Toplevel):
         self.image_path = image_path
         self.callback = callback
         self.crop_coords = None
+        self.control_points = []
+        self.selected_point = None
+        self.point_radius = 5
         
         self.original_image = Image.open(image_path)
         
@@ -78,38 +81,127 @@ class CropWindow(tk.Toplevel):
         
         ttk.Button(self, text="Validate Selection", 
                   command=self.validate_crop).pack(pady=5)
-        ttk.Label(self, text="Click and drag to select the range area"
-                 ).pack(pady=5)
+        ttk.Label(self, text="Click and drag to select the range area.\n"
+                 "Use control points to adjust the selection.").pack(pady=5)
         
         self.canvas.bind("<ButtonPress-1>", self.on_press)
         self.canvas.bind("<B1-Motion>", self.on_drag)
         self.canvas.bind("<ButtonRelease-1>", self.on_release)
+        self.canvas.bind("<Motion>", self.on_motion)
+    
+    def create_control_points(self, x1, y1, x2, y2):
+        # Clear existing control points
+        for point in self.control_points:
+            self.canvas.delete(point)
+        self.control_points.clear()
+        
+        # Create new control points at corners and midpoints
+        points = [
+            (x1, y1),  # Top-left
+            (x2, y1),  # Top-right
+            (x2, y2),  # Bottom-right
+            (x1, y2),  # Bottom-left
+            ((x1 + x2) / 2, y1),  # Top-middle
+            (x2, (y1 + y2) / 2),  # Right-middle
+            ((x1 + x2) / 2, y2),  # Bottom-middle
+            (x1, (y1 + y2) / 2)   # Left-middle
+        ]
+        
+        for x, y in points:
+            point = self.canvas.create_oval(
+                x - self.point_radius, y - self.point_radius,
+                x + self.point_radius, y + self.point_radius,
+                fill='red'
+            )
+            self.control_points.append(point)
+    
+    def get_point_type(self, point_index):
+        if point_index < 4:  # Corner points
+            return "corner", point_index
+        else:  # Middle points
+            return "middle", point_index - 4
+    
+    def update_rectangle(self, point_index, new_x, new_y):
+        coords = list(self.canvas.coords(self.rect_id))
+        point_type, idx = self.get_point_type(point_index)
+        
+        if point_type == "corner":
+            if idx == 0:  # Top-left
+                coords[0], coords[1] = new_x, new_y
+            elif idx == 1:  # Top-right
+                coords[2], coords[1] = new_x, new_y
+            elif idx == 2:  # Bottom-right
+                coords[2], coords[3] = new_x, new_y
+            elif idx == 3:  # Bottom-left
+                coords[0], coords[3] = new_x, new_y
+        else:  # Middle points
+            if idx == 0:  # Top-middle
+                coords[1] = new_y
+            elif idx == 1:  # Right-middle
+                coords[2] = new_x
+            elif idx == 2:  # Bottom-middle
+                coords[3] = new_y
+            elif idx == 3:  # Left-middle
+                coords[0] = new_x
+        
+        self.canvas.coords(self.rect_id, *coords)
+        self.create_control_points(*coords)
+    
+    def find_nearest_point(self, x, y):
+        for i, point in enumerate(self.control_points):
+            point_coords = self.canvas.coords(point)
+            point_x = (point_coords[0] + point_coords[2]) / 2
+            point_y = (point_coords[1] + point_coords[3]) / 2
+            
+            distance = ((point_x - x) ** 2 + (point_y - y) ** 2) ** 0.5
+            if distance <= self.point_radius * 2:
+                return i
+        return None
     
     def on_press(self, event):
-        self.start_x = event.x
-        self.start_y = event.y
+        self.selected_point = self.find_nearest_point(event.x, event.y)
         
-        if self.rect_id:
-            self.canvas.delete(self.rect_id)
-        
-        self.rect_id = self.canvas.create_rectangle(
-            self.start_x, self.start_y, self.start_x, self.start_y,
-            outline='red', width=2
-        )
+        if self.selected_point is None:
+            self.start_x = event.x
+            self.start_y = event.y
+            
+            if self.rect_id:
+                self.canvas.delete(self.rect_id)
+                for point in self.control_points:
+                    self.canvas.delete(point)
+                self.control_points.clear()
+            
+            self.rect_id = self.canvas.create_rectangle(
+                self.start_x, self.start_y, self.start_x, self.start_y,
+                outline='red', width=2
+            )
     
     def on_drag(self, event):
-        if self.rect_id:
+        if self.selected_point is not None:
+            self.update_rectangle(self.selected_point, event.x, event.y)
+        elif self.rect_id:
             self.canvas.coords(self.rect_id, self.start_x, self.start_y, event.x, event.y)
     
     def on_release(self, event):
-        end_x, end_y = event.x, event.y
+        if self.selected_point is None and self.rect_id:
+            coords = self.canvas.coords(self.rect_id)
+            self.create_control_points(*coords)
         
-        x1 = min(self.start_x, end_x) * self.scale_x
-        y1 = min(self.start_y, end_y) * self.scale_y
-        x2 = max(self.start_x, end_x) * self.scale_x
-        y2 = max(self.start_y, end_y) * self.scale_y
+        self.selected_point = None
         
-        self.crop_coords = (int(x1), int(y1), int(x2), int(y2))
+        if self.rect_id:
+            coords = self.canvas.coords(self.rect_id)
+            x1 = min(coords[0], coords[2]) * self.scale_x
+            y1 = min(coords[1], coords[3]) * self.scale_y
+            x2 = max(coords[0], coords[2]) * self.scale_x
+            y2 = max(coords[1], coords[3]) * self.scale_y
+            self.crop_coords = (int(x1), int(y1), int(x2), int(y2))
+    
+    def on_motion(self, event):
+        if self.find_nearest_point(event.x, event.y) is not None:
+            self.canvas.configure(cursor="hand2")
+        else:
+            self.canvas.configure(cursor="")
     
     def validate_crop(self):
         if self.crop_coords:
