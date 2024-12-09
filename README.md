@@ -1,6 +1,6 @@
 # Poker Range Extraction
 
-A Python tool for extracting and analyzing poker ranges from images.
+A Python tool for extracting and analyzing poker ranges from images Automatically by color.
 ![PKE](https://github.com/user-attachments/assets/94e56ca5-8dfa-46e9-bb79-7819bc10678c)
 # Poker Range Extraction - User Guide
 
